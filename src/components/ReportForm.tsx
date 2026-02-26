@@ -1,9 +1,8 @@
 "use client";
 
 import React, { useState } from 'react';
-import { db, storage } from '@/lib/firebase'; 
+import { db } from '@/lib/firebase'; 
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore'; 
-import { ref, uploadString, getDownloadURL } from 'firebase/storage';
 import { MapPin, Camera, User, Phone, X, CheckCircle2, Download, ShieldCheck } from 'lucide-react';
 import { jsPDF } from "jspdf";
 
@@ -28,26 +27,27 @@ export default function ReportForm() {
     return `CF-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
   };
 
+  // UPDATED: Aggressive compression to keep Base64 strings small for Firestore (Max 1MB total)
   const compressImage = (base64Str: string): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
       img.src = base64Str;
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 800;
+        const MAX_WIDTH = 500; // Reduced for database string safety
         const scale = MAX_WIDTH / img.width;
         canvas.width = MAX_WIDTH;
         canvas.height = img.height * scale;
         const ctx = canvas.getContext('2d');
         ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/jpeg', 0.6));
+        resolve(canvas.toDataURL('image/jpeg', 0.4)); // Lower quality to save space
       };
     });
   };
 
   const handleAadharChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let val = e.target.value.replace(/\D/g, '');
-    if (val.length > 16) val = val.slice(0, 16);
+    if (val.length > 12) val = val.slice(0, 12); // Aadhar is 12 digits
     const formatted = val.match(/.{1,4}/g)?.join(' ') || '';
     setFormData({ ...formData, aadhar: formatted });
   };
@@ -124,62 +124,49 @@ export default function ReportForm() {
     }
   };
 
-const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  
-  // ADD THIS: Prevent submission if location is missing (Solves logical empty data)
-  if (!formData.lat || !formData.lng) {
-    return alert("Please verify your location first!");
-  }
-
-  setLoading(true);
-
-  try {
-    const complaintId = generateComplaintId();
-
-    // ERROR SOURCE 1: If this fails, it's a CORS issue
-    const imageUrls = await Promise.all(
-      formData.images.map(async (base64, index) => {
-        const storageRef = ref(storage, `public_reports/${complaintId}/img_${index}`);
-        const uploadTask = await uploadString(storageRef, base64, 'data_url');
-        return await getDownloadURL(uploadTask.ref);
-      })
-    );
-
-    const submissionPayload = {
-      complaintId,
-      name: formData.name,
-      phone: formData.phone,
-      aadhar: formData.aadhar,
-      description: formData.description,
-      lat: formData.lat,
-      lng: formData.lng,
-      images: imageUrls,
-      status: "Pending ⏳",
-      createdAt: serverTimestamp(), 
-    };
-
-    // ERROR SOURCE 2: If this fails, it's a Permission issue
-    await addDoc(collection(db, "complaints"), submissionPayload);
-    
-    // HANDLE SUCCESS HERE: Only show success if database write actually worked
-    setReceiptData(submissionPayload); 
-    setFinalId(complaintId);
-    setShowSuccess(true);
-
-  } catch (error: any) {
-    // CATCHING THE SPECIFIC DATABASE ERRORS
-    console.error("Database Error:", error.code);
-    
-    if (error.code === 'permission-denied') {
-      alert("Database Error: Access Denied. Update your Firebase Rules to 'allow write: if true'.");
-    } else {
-      alert("Connection Error: " + error.message);
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.lat || !formData.lng) {
+      return alert("Please verify your location first!");
     }
-  } finally {
-    setLoading(false);
-  }
-};
+    setLoading(true);
+
+    try {
+      const complaintId = generateComplaintId();
+
+      // BYPASSING FIREBASE STORAGE: Using Base64 strings directly in Firestore
+      // This avoids the Blaze Plan requirement and CORS errors
+      const submissionPayload = {
+        complaintId,
+        name: formData.name,
+        phone: formData.phone,
+        aadhar: formData.aadhar,
+        description: formData.description,
+        lat: formData.lat,
+        lng: formData.lng,
+        images: formData.images, // Storing raw Base64 strings
+        status: "Pending ⏳",
+        createdAt: serverTimestamp(), 
+      };
+
+      // Writing to Firestore (Ensure Rules are set to 'allow write: if true')
+      await addDoc(collection(db, "complaints"), submissionPayload);
+      
+      setReceiptData(submissionPayload); 
+      setFinalId(complaintId);
+      setShowSuccess(true);
+
+    } catch (error: any) {
+      console.error("Submission Error:", error);
+      if (error.code === 'permission-denied') {
+        alert("Permission Denied: Ensure Firestore Rules allow public writes for this demo.");
+      } else {
+        alert("Error submitting report: " + error.message);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="relative">
@@ -195,7 +182,7 @@ const handleSubmit = async (e: React.FormEvent) => {
             <div className="relative">
               <ShieldCheck className="absolute left-3 top-3 text-slate-400" size={18} />
               <input 
-                type="text" required placeholder="XXXX XXXX XXXX XXXX"
+                type="text" required placeholder="XXXX XXXX XXXX"
                 className="w-full p-3 pl-10 border rounded-xl bg-slate-50 focus:ring-2 focus:ring-blue-500 outline-none font-mono tracking-[0.2em]" 
                 value={formData.aadhar} onChange={handleAadharChange}
               />
@@ -261,7 +248,7 @@ const handleSubmit = async (e: React.FormEvent) => {
         )}
 
         <button disabled={loading} className="w-full py-4 bg-blue-600 text-white font-black rounded-2xl hover:bg-blue-700 disabled:bg-slate-300 transition-all flex items-center justify-center gap-2">
-          {loading ? "UPLOADING..." : "SUBMIT REPORT"}
+          {loading ? "SAVING DATA..." : "SUBMIT REPORT"}
         </button>
       </form>
 

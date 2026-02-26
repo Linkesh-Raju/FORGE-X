@@ -1,7 +1,7 @@
-import { initializeApp } from "firebase/app";
+import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
-import { getStorage } from "firebase/storage"; // 1. Import Storage
+import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAD2BXYwGlYrTxkE-0i5s0D8hiIJDEYtms",
@@ -13,8 +13,9 @@ const firebaseConfig = {
   measurementId: "G-858MPCE53K"
 };
 
-const app = initializeApp(firebaseConfig);
+// Initialize Firebase (Prevents "app already exists" errors during hot-reloads)
+const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
 export const db = getFirestore(app);
 export const auth = getAuth(app);
-export const storage = getStorage(app); // 2. Export Storage
+export const storage = getStorage(app);
